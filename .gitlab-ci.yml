@@ -1,0 +1,110 @@
+# Pipeline GitLab CI/CD — books-scraper
+# Ordem dos stages: lint → test → build → deploy
+# Justificativa: falha rápida e barata primeiro (lint não precisa compilar tudo),
+# validação de lógica (test) antes de gastar tempo buildando a imagem Docker.
+
+image: golang:1.23-alpine
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  # Variáveis nativas do GitLab CI usadas para evitar hardcoding de registry/tag.
+  DOCKER_DRIVER: overlay2
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+  GOPATH: $CI_PROJECT_DIR/.go-cache
+
+# Cache de módulos Go compartilhado entre todos os jobs.
+# Reduz drasticamente o tempo de pipeline ao evitar re-download das dependências.
+cache:
+  key: go-modules-$CI_COMMIT_REF_SLUG
+  paths:
+    - .go-cache/pkg/mod/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage: lint
+# Roda golangci-lint. Job falha se houver qualquer erro de lint.
+# golangci-lint agrega 50+ linters: errcheck, gosec, staticcheck, etc.
+# ─────────────────────────────────────────────────────────────────────────────
+lint:
+  stage: lint
+  before_script:
+    - mkdir -p .go-cache
+    - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  script:
+    - golangci-lint run ./...
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage: test
+# Roda todos os testes unitários com output verboso e relatório de cobertura.
+# Job falha se qualquer teste falhar.
+# ─────────────────────────────────────────────────────────────────────────────
+test:
+  stage: test
+  before_script:
+    - mkdir -p .go-cache
+  script:
+    - go test -v -race -coverprofile=coverage.out ./...
+    - go tool cover -func=coverage.out
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.out
+    expire_in: 1 week
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage: build
+# Constrói a imagem Docker e faz push para o GitLab Container Registry.
+# Usa $CI_REGISTRY_IMAGE e $CI_COMMIT_SHA — variáveis nativas do GitLab CI.
+# ─────────────────────────────────────────────────────────────────────────────
+build:
+  stage: build
+  image: docker:26
+  services:
+    - docker:26-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker build -t "$IMAGE_TAG" .
+    - docker push "$IMAGE_TAG"
+    # Tag adicional 'latest' para a branch main facilita deploys e pulls manuais.
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        docker tag "$IMAGE_TAG" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage: deploy
+# Simula o deploy no AWS ECS.
+# Roda APENAS na branch main (regra: código em main = pronto para produção).
+# Em produção real, este job usaria aws-cli com credenciais via CI/CD variables.
+# ─────────────────────────────────────────────────────────────────────────────
+deploy:
+  stage: deploy
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - echo "=== Simulando deploy no AWS ECS ==="
+    - echo "Imagem a deployar: $IMAGE_TAG"
+    - echo ""
+    - echo "aws ecs update-service \\"
+    - echo "  --cluster production \\"
+    - echo "  --service books-scraper \\"
+    - echo "  --force-new-deployment \\"
+    - echo "  --region us-east-1"
+    - echo ""
+    - echo "aws ecs wait services-stable \\"
+    - echo "  --cluster production \\"
+    - echo "  --services books-scraper \\"
+    - echo "  --region us-east-1"
+    - echo ""
+    - echo "=== Deploy simulado com sucesso ==="
+  environment:
+    name: production

@@ -1,0 +1,47 @@
+services:
+  # ─────────────────────────────────────────────
+  # PostgreSQL 16 — banco de dados do scraper
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bookscraper
+      POSTGRES_USER: scraper
+      POSTGRES_PASSWORD: scraper123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    # Health check garante que o scraper só inicia após o banco estar pronto.
+    # Evita race condition de startup sem precisar de `sleep` no entrypoint.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scraper -d bookscraper"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # Scraper — serviço principal
+  # ─────────────────────────────────────────────
+  scraper:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Monta o diretório output/ local para persistir os arquivos gerados.
+      - ./output:/app/output
+    environment:
+      # Chave do Gemini lida da env do host (nunca hardcoded no compose).
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    command:
+      - "--pages=50"
+      - "--delay=300ms"
+      - "--workers=2"
+      - "--formats=json,csv,postgres"
+      - "--output=/app/output"
+      - "--db-url=postgres://scraper:scraper123@postgres:5432/bookscraper?sslmode=disable"
+      - "--gemini"
+
+volumes:
+  pgdata:

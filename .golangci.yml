@@ -1,0 +1,35 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # detecta erros ignorados (ex: _ = f.Close())
+    - gosimple      # simplificações idiomáticas do Go
+    - govet         # análise estática do compilador Go
+    - staticcheck   # conjunto amplo de checks de correctude
+    - unused        # variáveis, funções e tipos não utilizados
+    - gosec         # vulnerabilidades de segurança comuns
+    - misspell      # erros de ortografia em comentários/strings
+    - gofmt         # formatação canônica do Go
+    - bodyclose     # detecta response bodies não fechados (memory leak)
+    - noctx         # detecta uso de http.Request sem context
+    - exhaustive    # switch statements incompletos em enums
+
+linters-settings:
+  gosec:
+    excludes:
+      # G107: URL fornecida por variável — aceitável neste contexto de scraper controlado.
+      - G107
+  errcheck:
+    # Ignora erros de Close() em defer — padrão comum e aceitável.
+    exclude-functions:
+      - (io.Closer).Close
+
+issues:
+  exclude-rules:
+    # Testes podem usar funções sem verificar erros em contextos de setup.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
